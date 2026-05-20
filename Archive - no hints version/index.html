@@ -159,49 +159,6 @@
     color:var(--ink);min-width:140px;text-align:center;
   }
 
-  /* hint bar */
-  .hintbar{
-    display:flex;align-items:center;gap:12px;flex-wrap:wrap;
-    justify-content:center;
-    background:var(--paper);border:1px solid #cbb78d;border-radius:10px;
-    padding:10px 16px;
-  }
-  .hintlabel{
-    font-family:'Spline Sans Mono',monospace;font-size:.72rem;
-    letter-spacing:.08em;text-transform:uppercase;color:var(--burn);
-  }
-  .stepper{
-    display:flex;align-items:center;border:1px solid #b69a6c;
-    border-radius:8px;overflow:hidden;
-  }
-  .stepper button{
-    border:none;border-radius:0;background:var(--wood-light);
-    font-size:1.2rem;font-weight:700;line-height:1;
-    padding:4px 14px;color:var(--ink);
-  }
-  .stepper button:hover{background:var(--wood-mid);}
-  .stepper button:disabled{opacity:.3;cursor:not-allowed;}
-  .stepval{
-    font-family:'Spline Sans Mono',monospace;font-size:1rem;font-weight:600;
-    min-width:34px;text-align:center;padding:4px 0;
-  }
-  #hintOne{
-    background:linear-gradient(165deg,#7a5532,#4f3519);
-    color:#f4ecdb;border-color:#3a2710;font-weight:600;padding:9px 16px;
-  }
-  #hintOne:disabled{opacity:.4;cursor:not-allowed;}
-  #hintFull,#hintHide{padding:9px 14px;font-size:.9rem;}
-  #hintFull:disabled,#hintHide:disabled{opacity:.4;cursor:not-allowed;}
-  .hinttip{
-    width:100%;text-align:center;
-    font-family:'Spline Sans Mono',monospace;font-size:.66rem;
-    color:#7a6a4a;font-style:normal;
-  }
-  .cell.revealable{cursor:pointer;}
-  .cell.revealable:hover{
-    box-shadow:inset 0 0 0 2px var(--burn);
-  }
-
   /* legend */
   .legend{
     display:flex;flex-wrap:wrap;gap:8px 12px;justify-content:center;
@@ -276,19 +233,6 @@
 
     <div class="stage">
       <div class="status" id="status">Choose a date and press Solve.</div>
-      <div class="hintbar" id="hintbar" style="display:none;">
-        <span class="hintlabel">Pieces shown</span>
-        <div class="stepper">
-          <button id="hintMinus" aria-label="reveal fewer pieces">−</button>
-          <span class="stepval" id="hintCount">0</span>
-          <button id="hintPlus" aria-label="reveal more pieces">+</button>
-        </div>
-        <span class="hintlabel">of 9</span>
-        <button id="hintOne">Reveal one more</button>
-        <button id="hintFull">Show full solution</button>
-        <button id="hintHide">Hide all</button>
-        <span class="hinttip" id="hintTip">Tip: tap an empty cell to reveal its piece.</span>
-      </div>
       <div class="tray">
         <div class="grid" id="grid"></div>
       </div>
@@ -469,7 +413,6 @@ let mode="one";
 let solutions=[];
 let solIndex=0;
 let currentDate=null;
-let revealed=new Set();   // piece names currently revealed (empty = nothing shown)
 
 /* populate selects */
 const monthSel=$("month"), daySel=$("day");
@@ -510,11 +453,7 @@ function pieceCellMap(sol){
   return map;
 }
 
-/* render the 7x7 board.
-   sol = current solution (or null for the initial empty board).
-   When a solution is shown, only pieces in the global `revealed` set are
-   coloured in; hidden-piece cells stay as empty tray cells and can be
-   clicked to reveal that piece. */
+/* render the 7x7 board for a solution (or empty board if sol is null) */
 function renderBoard(sol){
   const grid=$("grid");
   grid.innerHTML="";
@@ -528,15 +467,13 @@ function renderBoard(sol){
       div.classList.add("void");
     }else{
       const label=board[k];
-      const piece=map[k];
-      const shown=piece && revealed.has(piece);
       if(label===monthLabel){
         div.classList.add("free-month");div.textContent=label;
       }else if(label===dayLabel){
         div.classList.add("free-day");div.textContent=label;
-      }else if(shown){
+      }else if(map[k]){
         div.classList.add("piece");
-        div.style.background=PIECE_COLORS[piece];
+        div.style.background=PIECE_COLORS[map[k]];
         const corner=document.createElement("span");
         corner.className="corner";corner.textContent=label;
         div.appendChild(corner);
@@ -544,15 +481,6 @@ function renderBoard(sol){
         div.classList.add(sol?"empty":"label");
         if(!sol){div.style.background="var(--paper)";div.style.boxShadow="inset 0 0 0 1px #d8c8a2";}
         div.appendChild(document.createTextNode(label));
-        // click a hidden-piece cell to reveal exactly that piece
-        if(sol && piece){
-          div.classList.add("revealable");
-          div.title="Reveal this piece";
-          div.addEventListener("click",()=>{
-            revealed.add(piece);
-            showCurrent();
-          });
-        }
       }
     }
     grid.appendChild(div);
@@ -603,58 +531,10 @@ function renderGallery(){
   });
 }
 
-/* ---- hints ----
-   Pieces are revealed edge/corner-first: the ones touching the board's
-   outer border are the most useful to lock in when solving by hand. */
-function isEdgeCell(k){
-  const [r,c]=k.split(",").map(Number);
-  for(const [dr,dc] of [[-1,0],[1,0],[0,-1],[0,1]]){
-    if(!board.hasOwnProperty((r+dr)+","+(c+dc))) return true;
-  }
-  return false;
-}
-function hintOrder(sol){
-  const scored=Object.keys(sol).map(p=>{
-    let edge=0;
-    for(const k of sol[p]) if(isEdgeCell(k)) edge++;
-    return {piece:p, edge};
-  });
-  scored.sort((a,b)=> b.edge-a.edge || a.piece.localeCompare(b.piece));
-  return scored.map(s=>s.piece);
-}
-/* reveal the next edge-first piece that isn't shown yet */
-function revealNextPiece(){
-  const sol=solutions[solIndex];
-  for(const p of hintOrder(sol)){
-    if(!revealed.has(p)){ revealed.add(p); return p; }
-  }
-  return null;
-}
-/* hide back to exactly n pieces (edge-first order kept) */
-function setRevealCount(n){
-  const sol=solutions[solIndex];
-  const order=hintOrder(sol);
-  revealed=new Set(order.slice(0,Math.max(0,Math.min(n,order.length))));
-}
-function syncHintUI(){
-  const total=solutions.length?Object.keys(solutions[solIndex]).length:9;
-  const n=revealed.size;
-  $("hintCount").textContent=n;
-  $("hintMinus").disabled=n<=0;
-  $("hintPlus").disabled=n>=total;
-  $("hintOne").disabled=n>=total;
-  $("hintFull").disabled=n>=total;
-  $("hintHide").disabled=n<=0;
-}
-
 function showCurrent(){
-  if(!solutions.length){ renderBoard(null); $("hintbar").style.display="none"; return; }
-  const sol=solutions[solIndex];
-  // keep `revealed` valid for this solution (piece names are stable, so fine)
-  renderBoard(sol);
+  if(!solutions.length){ renderBoard(null); return; }
+  renderBoard(solutions[solIndex]);
   renderLegend();
-  $("hintbar").style.display="flex";
-  syncHintUI();
   const nav=$("nav");
   if(solutions.length>1){
     nav.style.display="flex";
@@ -667,36 +547,8 @@ function showCurrent(){
   renderGallery();
 }
 
-function statusForReveal(){
-  const total=Object.keys(solutions[solIndex]).length;
-  const n=revealed.size;
-  if(n===0) $("status").textContent=
-    `${currentDate.month} ${currentDate.day}: solved. Reveal pieces for a hint.`;
-  else if(n>=total) $("status").textContent=
-    `${currentDate.month} ${currentDate.day}: full solution shown.`;
-  else $("status").textContent=
-    `Hint: showing ${n} of ${total} piece${n>1?"s":""}.`;
-}
-
-$("prev").addEventListener("click",()=>{if(solIndex>0){solIndex--;showCurrent();statusForReveal();}});
-$("next").addEventListener("click",()=>{if(solIndex<solutions.length-1){solIndex++;showCurrent();statusForReveal();}});
-
-/* hint controls */
-$("hintMinus").addEventListener("click",()=>{
-  setRevealCount(revealed.size-1);showCurrent();statusForReveal();
-});
-$("hintPlus").addEventListener("click",()=>{
-  setRevealCount(revealed.size+1);showCurrent();statusForReveal();
-});
-$("hintOne").addEventListener("click",()=>{
-  revealNextPiece();showCurrent();statusForReveal();
-});
-$("hintFull").addEventListener("click",()=>{
-  setRevealCount(9);showCurrent();statusForReveal();
-});
-$("hintHide").addEventListener("click",()=>{
-  revealed=new Set();showCurrent();statusForReveal();
-});
+$("prev").addEventListener("click",()=>{if(solIndex>0){solIndex--;showCurrent();}});
+$("next").addEventListener("click",()=>{if(solIndex<solutions.length-1){solIndex++;showCurrent();}});
 
 /* solve button */
 $("solve").addEventListener("click",()=>{
@@ -705,7 +557,6 @@ $("solve").addEventListener("click",()=>{
   currentDate={month,day};
   $("status").textContent="Solving…";
   $("nav").style.display="none";
-  $("hintbar").style.display="none";
   $("gallery").innerHTML="";
   $("legend").innerHTML="";
   setTimeout(()=>{
@@ -714,18 +565,16 @@ $("solve").addEventListener("click",()=>{
     const limit=findAll?500:1;
     solutions=solve(month,String(day),findAll,limit);
     solIndex=0;
-    revealed=new Set();      // start with nothing revealed
     const ms=Math.round(performance.now()-t0);
     if(!solutions.length){
       $("status").textContent="No solution found for "+month+" "+day+".";
       renderBoard(null);
-      $("hintbar").style.display="none";
     }else if(findAll){
       const capped=solutions.length>=limit;
-      $("status").textContent=`${month} ${day}: ${solutions.length}${capped?"+":""} solution${solutions.length>1?"s":""} found — reveal pieces for a hint.`;
+      $("status").textContent=`${month} ${day}: ${solutions.length}${capped?"+":""} solution${solutions.length>1?"s":""} found in ${ms} ms.`;
       showCurrent();
     }else{
-      $("status").textContent=`${month} ${day}: solved in ${ms} ms — reveal pieces for a hint.`;
+      $("status").textContent=`${month} ${day}: solved in ${ms} ms.`;
       showCurrent();
     }
   },30);
